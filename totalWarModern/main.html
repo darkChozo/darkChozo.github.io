@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Total War Modern Infantry Prototype</title>
+		<style>
+			body {
+				margin: 0;
+				background-color: #8fbc8f;
+			}
+			div {
+				width: 100%;
+			}
+			canvas {
+				vertical-align: bottom;
+				line-height: 1px;
+			}
+		</style>
+	</head>
+	<body>
+
+		<div>
+			<canvas id="mainCanvas"></canvas>
+		</div>
+
+		<script>
+			// ===========================================================
+			//   Globals/Parameters
+			// ===========================================================
+			var canvas = document.getElementById("mainCanvas");
+			var ctx = canvas.getContext("2d");
+			var mouseOffset = [0,0];
+			var mousePos = [];
+			var leftClickOrigin = [0,0];
+			var leftClickHeld = false;
+			var rightClickOrigin = [0,0];
+			var rightClickHeld = false;
+			var edgeLength = 10;
+			var boxSelectionThreshold = 5;
+			var draggingAUnit = false;
+
+			// ===========================================================
+			//   Unit triangle object
+			// ===========================================================
+			function modelTriangle(x,y) {
+				// triangle top point/origin
+				this.x = x;
+				this.y = y;
+				this.edgeLength = 18;
+				this.selected = false;
+				
+				// should point count as clicking this. func name kinda sucks.
+				this.isClicked = function isClicked(x,y) {
+					x = x + 2*edgeLength;
+					y = y + edgeLength;
+					return (x > this.x && x < this.x + 4*edgeLength &&
+					    y > this.y && y < this.y + 4*edgeLength);
+				};
+				
+				this.update = function update() {
+					
+					ctx.beginPath();
+					
+					ctx.moveTo(this.x,this.y);
+					ctx.lineTo(this.x - (edgeLength/2), this.y + edgeLength);
+					ctx.lineTo(this.x + (edgeLength/2), this.y + edgeLength);
+				//	ctx.lineTo(this.x, this.y);
+					ctx.closePath();
+					
+					if (this.selected) {
+						ctx.strokeStyle = "#FFFF00";
+						ctx.fillStyle = "#FFFF00";
+					} else {
+						ctx.strokeStyle = "#000000";
+						ctx.fillStyle = "#000000";
+					};
+
+					ctx.stroke();
+					ctx.fill();
+				}
+			};
+			
+			// ===========================================================
+			//   Squad object
+			// ===========================================================
+			function squad(x,y) { 
+				this.x = x;
+				this.y = y;
+				this.models = [];
+				this.selected = false;
+				for (let i = 0; i < 10; i++) {
+					this.models.push(new modelTriangle(this.x,this.y));
+				};
+				
+				this.select = function select(selected) {
+					this.selected = selected;
+					this.models.forEach(function(item,index,array) {
+						item.selected = this.valueOf();
+					}, selected)
+				};
+
+				this.updatePosition = function updatePosition(x = this.x, y = this.y, width) {
+					var maxWidth = edgeLength * 16;
+					
+					var unitOffsets =  [ [ [0,0], 			                  [maxWidth * 4/10,0]               ],
+									     [ [maxWidth * 1/10,maxWidth * 1/10], [maxWidth * 6/10,0] ],
+									     [ [0,maxWidth * 2/10],               [maxWidth * 2/10,0] ],
+									     [ [maxWidth * 1/10,maxWidth * 3/10], [maxWidth * 5/10,maxWidth * 1/10]               ],
+									     [ [0,maxWidth * 4/10],               [maxWidth * 3/10,maxWidth * 1/10]               ],
+									     [ [maxWidth * 1/10,maxWidth * 5/10], [maxWidth * 8/10,0] ],
+									     [ [0,maxWidth * 6/10],               [0,0] ],
+									     [ [maxWidth * 1/10,maxWidth * 7/10], [maxWidth * 7/10,maxWidth * 1/10]              ],
+									     [ [0,maxWidth * 8/10],               [maxWidth * 1/10,maxWidth * 1/10]                             ],
+									     [ [maxWidth * 1/10,maxWidth * 9/10], [maxWidth * 9/10,maxWidth * 1/10]] ];
+
+					this.x = x;
+					this.y = y;
+					for (let i = 0; i < this.models.length; i++) {
+						this.models[i].x = this.x + ((1-width) * unitOffsets[i][0][0]) + (width * (unitOffsets[i][1][0]));
+						this.models[i].y = this.y + ((1-width) * unitOffsets[i][0][1]) + (width * (unitOffsets[i][1][1]));
+					};
+				};
+
+				this.update = function update() {
+					this.models.forEach(function(item,index,array) {
+						item.update();
+					});
+				};
+			};
+			
+			// ===========================================================
+			//   Platoon object
+			// ===========================================================
+			function platoon(x,y) {
+				this.x = x;
+				this.y = y;
+				this.squads = [];
+				this.selected = false;
+				this.width = 400;
+				for (let i = 0; i < 4; i++) {
+					this.squads.push(new squad(this.x,this.y));
+				};
+				
+				this.select = function select(selected) {
+					this.selected = selected;
+					this.squads.forEach(function(item,index,array) {
+						item.select(this.valueOf());
+					}, selected)
+				};
+				
+				this.updatePosition = function updatePosition(x = this.x, y = this.y, width = this.width, index = 0) {
+					var maxWidth = edgeLength * 70;
+					var minWidth = edgeLength * 4;
+				
+					var squadOffsets = [ [ [0,0], 			   [maxWidth * 4/32, 0],             [maxWidth * 1/4,0] ],
+									     [ [0,maxWidth * 1/4], [0, maxWidth * 1/8],             [0,0] 			   ],
+									     [ [0,maxWidth * 2/4], [maxWidth * 11/32,maxWidth * 2/16], [maxWidth * 3/4,0] ],
+									     [ [0,maxWidth * 3/4], [maxWidth * 6/32,maxWidth * 7/32], [maxWidth * 2/4,0] ] ];
+					this.x = x;
+					this.y = y;
+					this.width = width;
+					if (width < minWidth) { width = minWidth };
+					if (width > maxWidth) { width = maxWidth };
+					width = (width - minWidth) / (maxWidth - minWidth);
+					for (let i = 0; i < this.squads.length; i++) {
+						if (width < .5) {
+							var adjwidth = width * 2;
+							this.squads[i].updatePosition(this.x + ((1-adjwidth) * (squadOffsets[i][0][0])) + (adjwidth * (squadOffsets[i][1][0]) + index*(width*maxWidth + minWidth) ),
+														  this.y + ((1-adjwidth) * (squadOffsets[i][0][1])) + (adjwidth * (squadOffsets[i][1][1])),
+														  width);
+					    } else {
+							var adjwidth = (width - .5)  * 2
+							this.squads[i].updatePosition(this.x + ((1-adjwidth) * (squadOffsets[i][1][0])) + (adjwidth * (squadOffsets[i][2][0]) + index*(width*maxWidth + minWidth)),
+														  this.y + ((1-adjwidth) * (squadOffsets[i][1][1])) + (adjwidth * (squadOffsets[i][2][1])),
+														  width);
+						};
+					};
+				/*	this.squads.forEach(function(item,index,array) {
+						item.updatePosition(this.x,this.y);
+				}, this); */
+				};
+				
+				this.updatePosition();
+				
+				this.update = function update() {
+					this.squads.forEach(function(item,index,array) {
+						item.update();
+					})
+				};
+			};
+			
+			// ===========================================================
+			//   Mouse Down
+			// ===========================================================
+			function mouseDownHandler() {
+				// left click
+				if (event.button == 0) {
+					leftClickOrigin = [event.offsetX,event.offsetY];
+					leftClickHeld = true;
+				};
+				
+				// right click
+				if (event.button == 2) {
+					rightClickOrigin = [event.offsetX,event.offsetY];
+					rightClickHeld = true;
+					draggingAUnit = false;
+					
+					var selectedPlatoons = [];
+					for (let i = 0; i < platoons.length; i++) {
+						if (platoons[i].selected) {
+							selectedPlatoons.push(platoons[i]);
+						};
+					};
+					selectedPlatoons.forEach(function(item,index,array) {
+						if (item.selected) {
+							item.updatePosition(rightClickOrigin[0] - .5 * item.width - ((array.length - 1) * .5 * item.width), rightClickOrigin[1], item.width, index);
+						};
+					});
+				};
+			};
+			canvas.addEventListener("mousedown",mouseDownHandler);
+			
+			
+			// ===========================================================
+			//   Mouse Up
+			// ===========================================================
+			function mouseUpHandler() {
+				// left click
+				if (event.button == 0) {
+					leftClickHeld = false;
+
+					for (let i = 0; i < platoons.length; i++) {
+						var shouldSelect = false;
+						var singleSelect = false;
+						for (let j = 0; j < platoons[i].squads.length; j++) {
+							if (singleSelect) { break; };
+							for (let k = 0; k < platoons[i].squads[j].models.length; k++) {
+								var unit = platoons[i].squads[j].models[k];
+								
+								if (Math.abs(leftClickOrigin[0] - event.offsetX) < boxSelectionThreshold
+									&& Math.abs(leftClickOrigin[1] - event.offsetY) < boxSelectionThreshold) {
+									// direct click selection
+									if (unit.isClicked(event.offsetX,event.offsetY)) {
+										shouldSelect = true;
+										singleSelect = true;
+										break;
+									};
+								} else {
+									// box selection
+									if ((unit.x > Math.min(leftClickOrigin[0],event.offsetX)) && 
+										(unit.x < Math.max(leftClickOrigin[0],event.offsetX)) && 
+										(unit.y > Math.min(leftClickOrigin[1],event.offsetY)) && 
+										(unit.y < Math.max(leftClickOrigin[1],event.offsetY))) {
+										
+										shouldSelect = true;
+										break;
+									};
+								};
+							};
+							if (shouldSelect) {
+								break;
+							};
+						};
+						if (!event.ctrlKey) {
+							platoons[i].select(shouldSelect);
+						} else {
+							if (shouldSelect) {
+								platoons[i].select(!(platoons[i].selected));
+							};
+						};
+					};
+				};
+				
+				// right click
+				if (event.button == 2) {
+					rightClickHeld = false;
+				};
+			};
+			canvas.addEventListener("mouseup",mouseUpHandler);
+			
+			
+			// ===========================================================
+			//   Mouse move
+			// ===========================================================
+			function mouseMoveHandler () {
+			
+				mousePos = [event.offsetX,event.offsetY];
+				
+				if ((event.buttons & 2) == 2) {
+					if (!draggingAUnit && mousePos[0] - rightClickOrigin[0] > 30) {
+						draggingAUnit = true;
+					};
+					if (draggingAUnit) {
+						var selectedPlatoons = [];
+						for (let i = 0; i < platoons.length; i++) {
+							if (platoons[i].selected) {
+								selectedPlatoons.push(platoons[i]);
+							};
+						};
+						selectedPlatoons.forEach(function(item,index,array) {
+							if (item.selected) {
+								item.updatePosition(rightClickOrigin[0], rightClickOrigin[1], (mousePos[0] - rightClickOrigin[0]) / array.length, index);
+							};
+						});
+					};
+				};
+			};
+			canvas.addEventListener("mousemove",mouseMoveHandler);
+			
+			// ===========================================================
+			//   Disable right click menu
+			// ===========================================================
+			function contextMenuHandler() {
+				event.preventDefault();
+				return false;
+			};
+			canvas.addEventListener("contextmenu",contextMenuHandler);
+			
+			
+			
+			
+			
+			
+			
+			// ===========================================================
+			//   Do stuff 
+			// ===========================================================
+			var platoons = [];
+			platoons.push(new platoon(200,50));
+			platoons.push(new platoon(700,300));
+			platoons.push(new platoon(200,500));
+			platoons.push(new platoon(1200,50));
+			platoons.push(new platoon(1200,500));
+			
+			platoons[0].select(true);
+			
+			
+			
+			
+			function mainLoop () {
+				canvas.width = document.getElementsByTagName("html")[0].clientWidth;
+				canvas.height = document.getElementsByTagName("html")[0].clientHeight;
+				
+				//background
+				ctx.beginPath();
+				ctx.fillStyle = "#8fbc8f";
+				ctx.rect(0,0,canvas.width,canvas.height);
+				ctx.fill();
+
+				platoons.forEach(function(item,index,array) {
+					item.update()
+				});
+				
+				// selection box
+				if (leftClickHeld &&
+					Math.abs(leftClickOrigin[0] - mousePos[0]) >= boxSelectionThreshold &&
+					Math.abs(leftClickOrigin[1] - mousePos[1]) >= boxSelectionThreshold) {
+					ctx.beginPath();
+					ctx.rect(leftClickOrigin[0] + mouseOffset[0],leftClickOrigin[1] + mouseOffset[1],mousePos[0] - leftClickOrigin[0],mousePos[1] - leftClickOrigin[1]);
+					ctx.strokeStyle = "#AAFFAA";
+					ctx.stroke();
+				};
+				
+				// WORDS
+				ctx.beginPath();
+				ctx.textAlign = "right";
+				ctx.font = "16px Verdana";
+				ctx.fillStyle = "black";
+				ctx.fillText("This is a simple prototype for how modern-style ranged infantry formations could work using the Total War click-and-drag system",(canvas.width) - 10,(canvas.height) - 52);
+				ctx.fillText("Each unit is a forty man platoon, made up of four ten man squads",(canvas.width) - 10,(canvas.height) - 30);
+				ctx.fillText("Probably doesn't work on mobile, may or may not work outside of Chrome",(canvas.width) - 10,(canvas.height) - 8);
+				
+				
+				ctx.textAlign = "left";
+				ctx.font = "8px Verdana";
+				ctx.fillText(rightClickOrigin,5,(canvas.height) - 24);
+				ctx.fillText(leftClickOrigin,5,(canvas.height) - 16);
+				ctx.fillText(mousePos,5,(canvas.height) - 8);
+				
+			};
+			
+			setInterval(mainLoop,16);
+		</script>
+
+	</body>
+</html>
+
